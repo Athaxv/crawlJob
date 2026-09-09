@@ -1,7 +1,6 @@
-import readline from 'readline';
 import 'dotenv/config';
 
-import { launchBrowser, getActivePage, closeBrowser } from '../browser.js';
+import { launchBrowser, getActivePage, openFirstPage, closeBrowser } from '../browser.js';
 import {
   getJobListings,
   openJob,
@@ -23,20 +22,6 @@ import {
   ApplicationResult,
 } from './application.js';
 import * as log from '../logger.js';
-
-
-function waitForEnter(prompt: string): Promise<void> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({
-      input:  process.stdin,
-      output: process.stdout,
-    });
-    rl.question(prompt, () => {
-      rl.close();
-      resolve();
-    });
-  });
-}
 
 
 async function processJob(
@@ -163,37 +148,31 @@ interface Stats {
 
 function printSummary(stats: Stats): void {
   log.sectionHeader('Finished');
-  log.summaryLine('Applied',                    stats.applied,                  '\x1b[32m');
-  log.summaryLine('Already applied',            stats.already_applied,          '\x1b[90m');
-  log.summaryLine('Skipped — mandatory fields', stats.skipped_mandatory_fields, '\x1b[33m');
-  log.summaryLine('Skipped — external app',     stats.skipped_external,         '\x1b[33m');
-  log.summaryLine('Skipped — CAPTCHA',          stats.skipped_captcha,          '\x1b[31m');
-  log.summaryLine('Skipped — no Apply button',  stats.skipped_no_apply_button,  '\x1b[90m');
-  log.summaryLine('Skipped — rate limited',     stats.skipped_rate_limited,     '\x1b[31m');
-  log.summaryLine('Skipped — error',            stats.skipped_error,            '\x1b[31m');
-  log.divider();
+  log.summaryLine('Applied',                    stats.applied,                  log.tones.success);
+  log.summaryLine('Already applied',            stats.already_applied,          log.tones.muted);
+  log.summaryLine('Skipped — mandatory fields', stats.skipped_mandatory_fields, log.tones.warn);
+  log.summaryLine('Skipped — external app',     stats.skipped_external,         log.tones.warn);
+  log.summaryLine('Skipped — CAPTCHA',          stats.skipped_captcha,          log.tones.error);
+  log.summaryLine('Skipped — no Apply button',  stats.skipped_no_apply_button,  log.tones.muted);
+  log.summaryLine('Skipped — rate limited',     stats.skipped_rate_limited,     log.tones.error);
+  log.summaryLine('Skipped — error',            stats.skipped_error,            log.tones.error);
+  log.outro('crawlJob · Wellfound');
 }
 
 
-async function main(): Promise<void> {
-  log.banner();
+export async function run(): Promise<void> {
+  log.banner('Wellfound');
 
-  log.raw('\n1. Launching browser…');
+  log.hint('1. Launching browser…');
   const context = await launchBrowser();
-  const page    = await getActivePage(context);
+  const page = await openFirstPage(context, 'https://wellfound.com/login', {
+    skipIfHostIncludes: 'wellfound.com',
+  });
 
-  // Navigate to Wellfound so the user can log in if needed.
-  const currentUrl = page.url();
-  if (!currentUrl.includes('wellfound.com')) {
-    await page.goto('https://wellfound.com/login', { waitUntil: 'domcontentloaded' })
-              .catch(() => undefined);
-  }
+  log.hint('2. If you are not logged in, please log in to Wellfound in the browser.');
+  log.hint('3. Navigate to your filtered job-results page.');
 
-  log.raw('\n2. If you are not logged in, please log in to Wellfound in the browser.');
-  log.raw('3. Navigate to your filtered job-results page.');
-  log.divider();
-
-  await waitForEnter('   Press ENTER when you are on the filtered results page and ready to start…');
+  await log.waitForEnter('Press Enter when you are on the filtered results page and ready to start');
 
   const jobUrls = await getJobListings(page);
 
@@ -203,7 +182,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  log.raw(`\nStarting automation — ${jobUrls.length} job(s) to process.\n`);
+  log.hint(`Starting automation — ${jobUrls.length} job(s) to process.`);
 
   const processed = new Set<string>();
 
@@ -260,7 +239,9 @@ async function main(): Promise<void> {
   await closeBrowser(context);
 }
 
-main().catch((err) => {
-  console.error('\nFatal error:', err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  run().catch((err) => {
+    console.error('\nFatal error:', err);
+    process.exit(1);
+  });
+}

@@ -1,8 +1,8 @@
 import path from 'path';
-import readline from 'readline';
 import 'dotenv/config';
 
-import { launchBrowser, getActivePage, closeBrowser } from '../browser.js';
+import { launchBrowser, openFirstPage, closeBrowser } from '../browser.js';
+import type { Page } from 'playwright';
 import {
   getCardCount,
   getCardIdentifier,
@@ -21,14 +21,7 @@ import * as log from '../logger.js';
 
 const SCREENSHOTS_DIR = path.resolve('screenshots');
 
-function waitForEnter(prompt: string): Promise<void> {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(prompt, () => { rl.close(); resolve(); });
-  });
-}
-
-async function screenshot(page: Awaited<ReturnType<typeof getActivePage>>, label: string) {
+async function screenshot(page: Page, label: string) {
   const ts   = new Date().toISOString().replace(/[:.]/g, '-');
   const safe = label.replace(/[^a-z0-9-_]/gi, '_').slice(0, 60);
   const file = path.join(SCREENSHOTS_DIR, `${ts}_ih_${safe}.png`);
@@ -47,31 +40,27 @@ interface Stats {
 
 function printSummary(stats: Stats): void {
   log.sectionHeader('Finished');
-  log.summaryLine('Applied',                   stats.applied,                 '\x1b[32m');
-  log.summaryLine('Already applied',           stats.already_applied,         '\x1b[90m');
-  log.summaryLine('Skipped — no Apply button', stats.skipped_no_apply_button, '\x1b[90m');
-  log.summaryLine('Skipped — CAPTCHA',         stats.skipped_captcha,         '\x1b[31m');
-  log.summaryLine('Skipped — error',           stats.skipped_error,           '\x1b[31m');
-  log.divider();
+  log.summaryLine('Applied',                   stats.applied,                 log.tones.success);
+  log.summaryLine('Already applied',           stats.already_applied,         log.tones.muted);
+  log.summaryLine('Skipped — no Apply button', stats.skipped_no_apply_button, log.tones.muted);
+  log.summaryLine('Skipped — CAPTCHA',         stats.skipped_captcha,         log.tones.error);
+  log.summaryLine('Skipped — error',           stats.skipped_error,           log.tones.error);
+  log.outro('crawlJob · Instahyre');
 }
 
 
-async function main(): Promise<void> {
-  log.banner();
-  log.raw('  (Instahyre mode)\n');
+export async function run(): Promise<void> {
+  log.banner('Instahyre');
 
-  log.raw('1. Launching browser…');
+  log.hint('1. Launching browser…');
   const context = await launchBrowser();
-  const page    = await getActivePage(context);
+  const page = await openFirstPage(context, INSTAHYRE_JOBS_URL);
 
-  await page.goto(INSTAHYRE_JOBS_URL, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  log.hint('2. Log in to Instahyre if needed.');
+  log.hint('3. Your saved filter URL is loading — adjust filters in the browser if needed.');
+  log.hint('4. Wait for results to appear.');
 
-  log.raw('\n2. Log in to Instahyre if needed.');
-  log.raw('3. Your saved filter URL is loading — adjust filters in the browser if needed.');
-  log.raw('4. Wait for results to appear.');
-  log.divider();
-
-  await waitForEnter('   Press ENTER when your filtered results are showing…');
+  await log.waitForEnter('Press Enter when your filtered results are showing');
 
   const appliedSet = new Set<string>();
   const stats: Stats = {
@@ -89,7 +78,7 @@ async function main(): Promise<void> {
       break;
     }
 
-    log.raw(`\nPage ${pageNum} — ${count} job(s)\n`);
+    log.hint(`Page ${pageNum} — ${count} job(s)`);
 
     let offset = 0;
     let processed = 0;
@@ -215,7 +204,9 @@ async function main(): Promise<void> {
   await closeBrowser(context);
 }
 
-main().catch((err) => {
-  console.error('\nFatal error:', err);
-  process.exit(1);
-});
+if (import.meta.main) {
+  run().catch((err) => {
+    console.error('\nFatal error:', err);
+    process.exit(1);
+  });
+}

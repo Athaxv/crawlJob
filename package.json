@@ -3,17 +3,24 @@
   "version": "1.0.0",
   "description": "Local Playwright automation for one-click job applications on Wellfound and Instahyre.",
   "type": "module",
+  "bin": {
+    "crawlJob": "./src/cli.ts"
+  },
   "scripts": {
-    "start:wellfound": "bun run src/wellfound/index.ts",
-    "start:instahyre": "bun run src/instahyre/index.ts",
+    "crawlJob": "bun run src/cli.ts",
+    "start:wellfound": "bun run src/cli.ts run --site wellfound",
+    "start:instahyre": "bun run src/cli.ts run --site instahyre",
     "build": "tsc"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.0",
     "dotenv": "^16.0.0",
+    "ora": "^9.4.1",
+    "picocolors": "^1.1.1",
     "playwright": "^1.62.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   }
 }
