@@ -1,162 +1,117 @@
-/**
- * crawlJob terminal UI — @clack/prompts + picocolors + ora.
- * Same export surface as before so apply pipelines stay unchanged.
- */
-
-import * as clack from '@clack/prompts';
+/** Red-only terminal output. */
 import pc from 'picocolors';
 import ora, { type Ora } from 'ora';
+import { ask } from './prompt.js';
 
-const RED = (s: string) => pc.bold(pc.red(s));
+const RED = (text: string) => pc.bold(pc.red(text));
+const SOFT_RED = (text: string) => pc.dim(pc.red(text));
 
 export type SummaryTone = 'success' | 'muted' | 'warn' | 'error';
 
 let activeSpinner: Ora | null = null;
 
-function stopSpinner(final?: 'succeed' | 'fail' | 'warn' | 'stop', text?: string): void {
+function stopSpinner(text?: string): void {
   if (!activeSpinner) return;
-  const s = activeSpinner;
+  activeSpinner.stop();
   activeSpinner = null;
-  if (final === 'succeed') s.succeed(text);
-  else if (final === 'fail') s.fail(text);
-  else if (final === 'warn') s.warn(text);
-  else {
-    s.stop();
-    if (text) console.log(text);
-  }
+  if (text) console.log(RED(text));
 }
 
 function startSpinner(message: string): void {
-  stopSpinner('stop');
-  activeSpinner = ora({
-    text: message,
-    color: 'red',
-    spinner: 'dots',
-  }).start();
+  stopSpinner();
+  activeSpinner = ora({ text: message, color: 'red', spinner: 'dots' }).start();
 }
 
 export function banner(subtitle?: string): void {
-  stopSpinner('stop');
-  const title = RED('crawlJob');
-  clack.intro(subtitle ? `${title} ${pc.dim(`· ${subtitle}`)}` : title);
+  stopSpinner();
+  console.log(RED(subtitle ? `crawlJob - ${subtitle}` : 'crawlJob'));
 }
 
-export function step(message: string): void {
-  startSpinner(message);
-}
+export function step(message: string): void { startSpinner(message); }
 
 export function success(message: string): void {
-  if (activeSpinner) {
-    stopSpinner('succeed', message);
-    return;
-  }
-  clack.log.success(message);
+  if (activeSpinner) return stopSpinner(`✓ ${message}`);
+  console.log(RED(`✓ ${message}`));
 }
 
 export function skip(message: string): void {
-  if (activeSpinner) {
-    stopSpinner('warn', message);
-    return;
-  }
-  clack.log.warn(message);
+  if (activeSpinner) return stopSpinner(`↷ ${message}`);
+  console.log(RED(`↷ ${message}`));
 }
 
 export function error(message: string): void {
-  if (activeSpinner) {
-    stopSpinner('fail', message);
-    return;
-  }
-  clack.log.error(message);
+  if (activeSpinner) return stopSpinner(`× ${message}`);
+  console.error(RED(`× ${message}`));
 }
 
 export function info(message: string): void {
-  stopSpinner('stop');
-  clack.log.info(pc.dim(message));
+  stopSpinner();
+  console.log(SOFT_RED(`   ↳ ${message}`));
 }
 
 export function jobHeader(current: number, total: number, label: string): void {
-  stopSpinner('stop');
+  stopSpinner();
   console.log();
-  clack.log.step(`${pc.dim(`[${current}/${total}]`)} ${pc.bold(label)}`);
+  const progress = `${String(current).padStart(String(total).length, '0')}/${total}`;
+  const displayLabel = label.startsWith('http')
+    ? (() => {
+        try {
+          const url = new URL(label);
+          return `${url.host}${url.pathname}`;
+        } catch {
+          return label;
+        }
+      })()
+    : label;
+  console.log(RED(`┌─ JOB ${progress}`));
+  console.log(SOFT_RED(`└─ ${displayLabel}`));
+}
+
+/** Prints the role/company context directly beneath the current job header. */
+export function jobDetails(message: string): void {
+  stopSpinner();
+  console.log(RED(`   ${message}`));
 }
 
 export function sectionHeader(message: string): void {
-  stopSpinner('stop');
+  stopSpinner();
   console.log();
-  clack.log.step(pc.bold(message));
+  console.log(RED(message));
 }
 
-function toneColor(tone?: SummaryTone | string): (s: string) => string {
-  switch (tone) {
-    case 'success':
-    case '\x1b[32m':
-      return pc.green;
-    case 'warn':
-    case '\x1b[33m':
-      return pc.yellow;
-    case 'error':
-    case '\x1b[31m':
-      return pc.red;
-    case 'muted':
-    case '\x1b[90m':
-      return pc.dim;
-    default:
-      return (s) => s;
-  }
-}
-
-export function summaryLine(label: string, value: number, colour?: SummaryTone | string): void {
-  stopSpinner('stop');
-  const paint = toneColor(colour);
-  console.log(`  ${pc.dim(label.padEnd(32, '.'))} ${paint(String(value))}`);
+export function summaryLine(label: string, value: number, _colour?: SummaryTone | string): void {
+  stopSpinner();
+  console.log(RED(`  ${label.padEnd(32, '.')} ${value}`));
 }
 
 export function divider(): void {
-  stopSpinner('stop');
+  stopSpinner();
   console.log();
 }
 
 export function raw(message: string): void {
-  stopSpinner('stop');
-  const trimmed = message.replace(/^\n+/, '');
-  if (!trimmed) {
-    console.log();
-    return;
-  }
-  for (const line of message.split('\n')) {
-    if (line.length === 0) console.log();
-    else clack.log.message(pc.dim(line));
-  }
+  stopSpinner();
+  for (const line of message.replace(/^\n+/, '').split('\n')) console.log(line ? RED(line) : '');
 }
 
 export function hint(message: string): void {
-  stopSpinner('stop');
-  clack.log.message(pc.dim(message));
+  stopSpinner();
+  console.log(RED(message));
 }
 
-/** Wait for Enter with a clack-styled prompt. */
 export async function waitForEnter(message: string): Promise<void> {
-  stopSpinner('stop');
-  const result = await clack.text({
-    message,
-    placeholder: 'press Enter',
-    defaultValue: '',
-  });
-  if (clack.isCancel(result)) {
-    clack.cancel('Cancelled.');
-    process.exit(0);
-  }
+  stopSpinner();
+  await ask(`${message} (press Enter)`);
 }
 
 export function outro(message = 'Done'): void {
-  stopSpinner('stop');
-  clack.outro(pc.dim(message));
+  stopSpinner();
+  console.log(RED(message));
 }
 
-/** Semantic tones for summary counts (preferred over raw ANSI). */
 export const tones = {
   success: 'success' as const,
-  muted:   'muted' as const,
-  warn:    'warn' as const,
-  error:   'error' as const,
+  muted: 'muted' as const,
+  warn: 'warn' as const,
+  error: 'error' as const,
 };

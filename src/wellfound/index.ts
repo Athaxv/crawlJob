@@ -54,7 +54,7 @@ async function processJob(
 
   // Log company / role now that the page has loaded.
   const meta = await getJobMeta(page);
-  log.info(`${meta.company} — ${meta.role}`);
+  log.jobDetails(`${meta.company} — ${meta.role}`);
 
   if (await isAlreadyApplied(page)) {
     log.skip('Already applied');
@@ -70,7 +70,7 @@ async function processJob(
   }
   log.step('Apply button found');
 
-  log.step('Opening application');
+  log.step('Opening application form');
   const modal = await openApplication(page, context, applyBtn);
 
   if (!modal) {
@@ -78,7 +78,7 @@ async function processJob(
     log.skip('External application (new tab opened or no modal)');
     return 'skipped_external';
   }
-  log.step('Application form detected');
+  log.step('Reviewing application requirements');
 
   if (await hasCaptcha(modal)) {
     const screenshot = await takeDebugScreenshot(page, 'captcha');
@@ -124,11 +124,11 @@ async function processJob(
 
   const verified = await verifyApplication(page);
   if (verified) {
-    log.success('Applied');
+    log.success('Application submitted');
   } else {
     // Submission appeared successful but we couldn't confirm the "Applied"
     // state change. Treat as success but note it.
-    log.success('Applied (could not confirm state change — treating as success)');
+    log.success('Application submitted (confirmation unavailable)');
   }
 
   return 'applied';

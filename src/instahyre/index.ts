@@ -160,7 +160,7 @@ export async function run(): Promise<void> {
         const success = await applyAndConfirm(page, applyBtn);
         if (success) {
           appliedSet.add(cardId);
-          log.success('Applied');
+          log.success('Application submitted');
           stats.applied++;
           newJobsOnThisPage++;
           // Applied → card's View button changes state, removed from

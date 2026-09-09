@@ -72,14 +72,14 @@ export async function openApplication(
   // Buttons INSIDE it are clickable (they're descendants, not behind it).
   const overlay = page.locator('.ReactModal__Overlay--after-open').first();
   if (await overlay.isVisible().catch(() => false)) {
-    log.info('Detected ReactModal overlay');
+    log.info('Application form opened — checking required fields');
     return overlay;
   }
 
   // 4. Standard dialog / aria-modal?
   const dialog = page.locator('[role="dialog"], [aria-modal="true"]').first();
   if (await dialog.isVisible().catch(() => false)) {
-    log.info('Detected ARIA dialog');
+    log.info('Application form opened — checking required fields');
     return dialog;
   }
 
@@ -95,7 +95,7 @@ export async function openApplication(
     .catch(() => false);
 
   if (portalSubmitVisible) {
-    log.info('Detected submit button inside ReactModalPortal');
+    log.info('Application form opened — checking required fields');
     return page.locator('.ReactModalPortal').first();
   }
 
