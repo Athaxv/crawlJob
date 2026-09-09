@@ -1,100 +1,159 @@
 import path from 'path';
-import os   from 'os';
-import fs   from 'fs';
-import { chromium, BrowserContext } from 'playwright';
+import os from 'os';
+import fs from 'fs';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 import * as log from './logger.js';
 
 /** Where the persistent browser profile is stored. */
 const PROFILE_DIR = path.join(os.homedir(), '.crawljob', 'browser-profile');
 
+const LAUNCH_TIMEOUT_MS = 60_000;
+
+type BrowserLaunchTarget =
+  | { kind: 'bundled' }
+  | { kind: 'executable'; path: string }
+  | { kind: 'channel'; channel: 'chrome' | 'msedge' };
+
+type PersistentLaunchOptions = NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>;
+
 /**
- * Resolves a Chromium-based browser binary for the current OS.
+ * Resolves which browser to launch.
  *
- * Priority:
- *   1. BROWSER_PATH env variable (any browser, user-specified)
- *   2. Brave (preferred — less bot-detection than Chrome)
- *   3. Google Chrome
- *   4. Chromium
- *
- * Set BROWSER_PATH in your shell or .env to use a custom path:
- *   BROWSER_PATH="/path/to/browser" pnpm start
+ * Default: Playwright's bundled Chromium (most reliable CDP match).
+ * Overrides:
+ *   BROWSER_PATH=/path/to/browser.exe
+ *   BROWSER_CHANNEL=chrome|msedge   (Playwright-managed system browser)
  */
-function getBrowserPath(): string | undefined {
-  if (process.env.BROWSER_PATH) return process.env.BROWSER_PATH;
-
-  const candidates: Record<string, string[]> = {
-    darwin: [
-      // Brave
-      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-      // Chrome
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      // Chromium
-      '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    ],
-    linux: [
-      // Brave
-      '/usr/bin/brave-browser',
-      '/usr/bin/brave',
-      '/usr/local/bin/brave-browser',
-      '/snap/bin/brave',
-      // Chrome
-      '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-      '/usr/local/bin/google-chrome',
-      // Chromium
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-    ],
-    win32: [
-      // Brave
-      'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-      'C:\\Program Files (x86)\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-      `${os.homedir()}\\AppData\\Local\\BraveSoftware\\Brave-Browser\\Application\\brave.exe`,
-      // Chrome
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      `${os.homedir()}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe`,
-    ],
-  };
-
-  for (const p of candidates[process.platform] ?? []) {
-    if (fs.existsSync(p)) return p;
+function resolveLaunchTarget(): BrowserLaunchTarget {
+  const channel = process.env.BROWSER_CHANNEL?.trim().toLowerCase();
+  if (channel === 'chrome' || channel === 'msedge') {
+    return { kind: 'channel', channel };
   }
 
-  return undefined;
+  const envPath = process.env.BROWSER_PATH?.trim();
+  if (envPath) {
+    if (fs.existsSync(envPath)) {
+      return { kind: 'executable', path: envPath };
+    }
+    log.error(`BROWSER_PATH does not exist: ${envPath}`);
+    log.info('Falling back to Playwright Chromium. Run: bunx playwright install chromium');
+  }
+
+  return { kind: 'bundled' };
 }
 
-const BROWSER_PATH = getBrowserPath();
+function describeTarget(target: BrowserLaunchTarget): string {
+  if (target.kind === 'bundled') return 'Playwright Chromium';
+  if (target.kind === 'channel') return `channel:${target.channel}`;
+  return target.path;
+}
 
 /**
  * Launches a persistent browser context so the existing login session
  * is reused across runs.
+ *
+ * Note: Playwright always starts on about:blank — call openFirstPage next.
  */
 export async function launchBrowser(): Promise<BrowserContext> {
-  log.step(`Using browser profile: ${PROFILE_DIR}`);
-  log.step(BROWSER_PATH ? `Using browser: ${BROWSER_PATH}` : 'Using Playwright Chromium');
+  const target = resolveLaunchTarget();
 
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
-    ...(BROWSER_PATH ? { executablePath: BROWSER_PATH } : {}),
+  log.step(`Using browser profile: ${PROFILE_DIR}`);
+  log.step(`Using browser: ${describeTarget(target)}`);
+
+  const options: PersistentLaunchOptions = {
     headless: false,
-    viewport:  { width: 1440, height: 900 },
+    viewport: { width: 1440, height: 900 },
     slowMo: 80,
+    timeout: LAUNCH_TIMEOUT_MS,
     args: [
       '--start-maximized',
       '--disable-blink-features=AutomationControlled',
     ],
-    ignoreDefaultArgs: ['--enable-automation'],
-  });
+  };
 
-  return context;
+  if (target.kind === 'executable') {
+    options.executablePath = target.path;
+  } else if (target.kind === 'channel') {
+    options.channel = target.channel;
+  }
+
+  try {
+    const context = await chromium.launchPersistentContext(PROFILE_DIR, options);
+    log.success('Browser ready');
+    return context;
+  } catch (err) {
+    const message = (err as Error).message;
+    log.error(`Browser launch failed: ${message}`);
+    log.info('Close every Chrome/Chromium window opened by crawlJob, then try:');
+    log.info(`  1. bunx playwright install chromium`);
+    log.info(`  2. Remove BROWSER_PATH from .env (use bundled Chromium)`);
+    log.info(`  3. Delete profile: ${PROFILE_DIR}`);
+    throw err;
+  }
 }
 
 /**
- * Returns the first page in the context, creating one if the context is empty.
+ * Returns a usable page: prefer one that is not about:blank, else first/new.
  */
-export async function getActivePage(context: BrowserContext) {
+export async function getActivePage(context: BrowserContext): Promise<Page> {
   const pages = context.pages();
+  const nonBlank = pages.find((p) => {
+    const u = p.url();
+    return u && u !== 'about:blank';
+  });
+  if (nonBlank) return nonBlank;
   return pages.length > 0 ? pages[0] : context.newPage();
+}
+
+function isBlankUrl(url: string): boolean {
+  return !url || url === 'about:blank' || url === 'chrome://newtab/';
+}
+
+/**
+ * Navigates the active page off about:blank to `url`.
+ * Throws if navigation fails or the page is still blank.
+ */
+export async function openFirstPage(
+  context: BrowserContext,
+  url: string,
+  options?: { skipIfHostIncludes?: string },
+): Promise<Page> {
+  const page = await getActivePage(context);
+  const current = page.url();
+
+  if (
+    options?.skipIfHostIncludes &&
+    !isBlankUrl(current) &&
+    current.includes(options.skipIfHostIncludes)
+  ) {
+    log.info(`Already on ${current}`);
+    return page;
+  }
+
+  log.step(`Navigating to ${url}`);
+
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  } catch (firstErr) {
+    log.info(`First navigation attempt failed, retrying with waitUntil=load…`);
+    try {
+      await page.goto(url, { waitUntil: 'load', timeout: 45_000 });
+    } catch (secondErr) {
+      log.error(`Failed to open ${url}: ${(secondErr as Error).message}`);
+      log.info(`Current page: ${page.url()}`);
+      throw secondErr;
+    }
+  }
+
+  const finalUrl = page.url();
+  if (isBlankUrl(finalUrl)) {
+    const err = new Error(`Navigation left the page blank (still on ${finalUrl || 'about:blank'})`);
+    log.error(err.message);
+    throw err;
+  }
+
+  log.success(`Opened ${finalUrl}`);
+  return page;
 }
 
 export async function closeBrowser(context: BrowserContext): Promise<void> {
