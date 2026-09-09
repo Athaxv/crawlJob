@@ -25,10 +25,13 @@ export const IS = {
     ':has-text("application has been submitted")',
     ':has-text("Application submitted successfully")',
   ].join(', '),
-  alreadyApplied: [
-    ':text-is("Applied")',
-    ':has-text("already applied")',
-    ':has-text("You have already applied")',
+  resumeHeading: 'h1:has-text("Your Internshala resume")',
+  resumeContinue: [
+    'button:has-text("Save and continue")',
+    'button:has-text("Save & continue")',
+    'button:has-text("Continue")',
+    'button:has-text("Proceed")',
+    'button:has-text("Next")',
   ].join(', '),
   captcha: [
     'iframe[src*="recaptcha"]',

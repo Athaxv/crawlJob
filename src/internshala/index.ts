@@ -2,13 +2,16 @@ import path from 'path';
 import 'dotenv/config';
 import type { Page } from 'playwright';
 import { closeBrowser, getActivePage, launchBrowser, openFirstPage } from '../browser.js';
+import { handleRequiredFields } from '../application-agent/index.js';
 import * as log from '../logger.js';
+import { createRunControl } from '../run-control.js';
 import { IS, INTERNSHALA_DOMAIN_RE, INTERNSHALA_INTERNSHIPS_URL, INTERNSHALA_JOBS_URL } from './selectors.js';
-import { getJobMeta, getListings, hasRequiredCustomFields, isVisible } from './jobs.js';
+import { continueFromResume, getJobMeta, getListings, isAlreadyApplied, isVisible } from './jobs.js';
 
 export type InternshalaMode = 'internships' | 'jobs' | 'both';
 
 interface Stats {
+  scraped: number;
   applied: number;
   alreadyApplied: number;
   skippedQuestions: number;
@@ -17,7 +20,7 @@ interface Stats {
   skippedError: number;
 }
 
-const newStats = (): Stats => ({ applied: 0, alreadyApplied: 0, skippedQuestions: 0, skippedCaptcha: 0, skippedExternal: 0, skippedError: 0 });
+const newStats = (): Stats => ({ scraped: 0, applied: 0, alreadyApplied: 0, skippedQuestions: 0, skippedCaptcha: 0, skippedExternal: 0, skippedError: 0 });
 
 async function screenshot(page: Page, label: string): Promise<string> {
   const dir = path.resolve('screenshots');
@@ -32,7 +35,7 @@ async function processListing(page: Page, url: string, stats: Stats): Promise<vo
   const meta = await getJobMeta(page);
   log.jobDetails(meta);
 
-  if (await isVisible(page.locator(IS.alreadyApplied))) {
+  if (await isAlreadyApplied(page)) {
     log.skip('Already applied');
     stats.alreadyApplied++;
     return;
@@ -68,8 +71,23 @@ async function processListing(page: Page, url: string, stats: Stats): Promise<vo
     stats.skippedCaptcha++;
     return;
   }
-  if (await hasRequiredCustomFields(page)) {
-    log.skip('Required application question or field');
+  if (await isVisible(page.locator(IS.resumeHeading))) {
+    log.info('Using your existing Internshala resume — continuing application');
+    if (!(await continueFromResume(page))) {
+      const shot = await screenshot(page, 'resume_continue_missing');
+      log.skip(`Resume step needs review (continuation action not found). Screenshot: ${shot}`);
+      stats.skippedError++;
+      return;
+    }
+    if (await isVisible(page.locator(IS.success))) {
+      log.success('Application submitted');
+      stats.applied++;
+      return;
+    }
+  }
+  const agentResult = await handleRequiredFields(page.locator('body'), { url, listing: meta, platform: 'Internshala' });
+  if (agentResult !== 'filled') {
+    log.skip(agentResult === 'review_required' ? 'Agent answers are ready for review' : 'Required application question or field');
     stats.skippedQuestions++;
     return;
   }
@@ -95,7 +113,7 @@ async function processListing(page: Page, url: string, stats: Stats): Promise<vo
   }
 }
 
-async function runCategory(page: Page, name: 'Internships' | 'Jobs', url: string, stats: Stats): Promise<void> {
+async function runCategory(page: Page, name: 'Internships' | 'Jobs', url: string, stats: Stats, control: ReturnType<typeof createRunControl>): Promise<void> {
   log.sectionHeader(name);
   await openFirstPage(page.context(), url);
   log.hint(`Log in and adjust your ${name.toLowerCase()} filters if needed.`);
@@ -105,8 +123,9 @@ async function runCategory(page: Page, name: 'Internships' | 'Jobs', url: string
     log.info(`No ${name.toLowerCase()} detail links found. Nothing to process.`);
     return;
   }
+  stats.scraped += listings.length;
   log.info(`Found ${listings.length} ${name.toLowerCase()}.`);
-  for (let index = 0; index < listings.length; index++) {
+  for (let index = 0; index < listings.length && !control.isCancelled(); index++) {
     const listing = listings[index];
     log.jobHeader(index + 1, listings.length, listing.url);
     try {
@@ -122,7 +141,9 @@ async function runCategory(page: Page, name: 'Internships' | 'Jobs', url: string
 
 function printSummary(stats: Stats): void {
   log.sectionHeader('Internshala finished');
+  log.summaryLine('Scraped', stats.scraped, log.tones.muted);
   log.summaryLine('Submitted', stats.applied, log.tones.success);
+  log.summaryLine('Not applied', stats.scraped - stats.applied, log.tones.warn);
   log.summaryLine('Already applied', stats.alreadyApplied, log.tones.muted);
   log.summaryLine('Skipped — required fields', stats.skippedQuestions, log.tones.warn);
   log.summaryLine('Skipped — CAPTCHA', stats.skippedCaptcha, log.tones.error);
@@ -135,11 +156,13 @@ export async function run(mode: InternshalaMode = 'both'): Promise<void> {
   const context = await launchBrowser();
   const page = await getActivePage(context);
   const stats = newStats();
+  const control = createRunControl();
   try {
-    if (mode === 'internships' || mode === 'both') await runCategory(page, 'Internships', INTERNSHALA_INTERNSHIPS_URL, stats);
-    if (mode === 'jobs' || mode === 'both') await runCategory(page, 'Jobs', INTERNSHALA_JOBS_URL, stats);
+    if (mode === 'internships' || mode === 'both') await runCategory(page, 'Internships', INTERNSHALA_INTERNSHIPS_URL, stats, control);
+    if (!control.isCancelled() && (mode === 'jobs' || mode === 'both')) await runCategory(page, 'Jobs', INTERNSHALA_JOBS_URL, stats, control);
     printSummary(stats);
   } finally {
     await closeBrowser(context);
+    control.dispose();
   }
 }

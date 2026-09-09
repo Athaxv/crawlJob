@@ -42,6 +42,24 @@ export async function isVisible(locator: Locator): Promise<boolean> {
   return locator.first().isVisible().catch(() => false);
 }
 
+/** Only a job-action button can establish the applied state; page text cannot. */
+export async function isAlreadyApplied(page: Page): Promise<boolean> {
+  const applied = page.getByRole('button', { name: /^(applied|already applied)$/i }).first();
+  return applied.isVisible().catch(() => false);
+}
+
+/** Internshala routes some applications through the already-saved resume page. */
+export async function continueFromResume(page: Page): Promise<boolean> {
+  if (!(await isVisible(page.locator(IS.resumeHeading)))) return false;
+  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight }));
+  await page.waitForTimeout(500);
+  const button = page.locator(IS.resumeContinue).first();
+  if (!(await isVisible(button))) return false;
+  await button.click();
+  await page.waitForTimeout(1200);
+  return true;
+}
+
 /** Required custom answers are intentionally never filled or submitted. */
 export async function hasRequiredCustomFields(page: Page): Promise<boolean> {
   return page.locator('input[required], textarea[required], select[required]').evaluateAll((fields) =>

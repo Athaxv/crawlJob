@@ -1,0 +1,10 @@
+{
+  "name": "Your name",
+  "email": "you@example.com",
+  "phone": "+91XXXXXXXXXX",
+  "location": "Your city, India",
+  "skills": ["TypeScript", "React", "Node.js"],
+  "experience": "Describe only your factual experience.",
+  "projects": [{ "name": "Project name", "description": "Factual project summary." }],
+  "links": { "github": "https://github.com/your-name", "linkedin": "https://www.linkedin.com/in/your-name" }
+}

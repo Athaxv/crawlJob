@@ -43,6 +43,10 @@ You’ll get a picker for **Wellfound**, **Instahyre**, or **Internshala**, then
 
 **Internshala:** supports **Internships**, **Jobs**, or **Both**. Set `INTERNSHALA_INTERNSHIPS_URL` and `INTERNSHALA_JOBS_URL` in `.env` to your saved, filtered results pages. The runner submits only applications without visible required custom fields; it skips questions, CAPTCHA, external applications, and unconfirmed submissions.
 
+## Required-field agent
+
+To let the runner handle required application fields, copy `profile.example.json` to `.crawljob/profile.json` and replace every placeholder with factual information. Add `GROQ_API_KEY` to `.env` and choose a mode: `review` (default: drafts only), `fill` (fills then asks you to approve submission), or `auto-submit`. The agent refuses sensitive, legal, salary, work-authorisation, and protected-characteristic questions, and records every draft/fill in `.crawljob/application-audit.jsonl`.
+
 Skip the picker:
 
 ```bash

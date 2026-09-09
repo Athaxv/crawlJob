@@ -18,6 +18,7 @@ import {
 } from './jobs.js';
 import { INSTAHYRE_JOBS_URL } from './selectors.js';
 import * as log from '../logger.js';
+import { createRunControl } from '../run-control.js';
 
 const SCREENSHOTS_DIR = path.resolve('screenshots');
 
@@ -38,9 +39,11 @@ interface Stats {
   skipped_error:            number;
 }
 
-function printSummary(stats: Stats): void {
+function printSummary(stats: Stats, scraped: number): void {
   log.sectionHeader('Finished');
+  log.summaryLine('Scraped',                   scraped,                       log.tones.muted);
   log.summaryLine('Applied',                   stats.applied,                 log.tones.success);
+  log.summaryLine('Not applied',               scraped - stats.applied,       log.tones.warn);
   log.summaryLine('Already applied',           stats.already_applied,         log.tones.muted);
   log.summaryLine('Skipped — no Apply button', stats.skipped_no_apply_button, log.tones.muted);
   log.summaryLine('Skipped — CAPTCHA',         stats.skipped_captcha,         log.tones.error);
@@ -69,14 +72,17 @@ export async function run(): Promise<void> {
   };
 
   let pageNum = 1;
+  let scraped = 0;
+  const control = createRunControl();
 
-  while (true) {
+  while (!control.isCancelled()) {
     const count = await getCardCount(page);
 
     if (count === 0) {
       log.info(`No job cards on page ${pageNum}. Stopping.`);
       break;
     }
+    scraped += count;
 
     log.hint(`Page ${pageNum} — ${count} job(s)`);
 
@@ -84,7 +90,7 @@ export async function run(): Promise<void> {
     let processed = 0;
     let newJobsOnThisPage = 0;
 
-    while (processed < count) {
+    while (processed < count && !control.isCancelled()) {
       try {
         // Ensure any stale modal is closed.
         if (await isModalOpen(page)) {
@@ -200,8 +206,9 @@ export async function run(): Promise<void> {
     pageNum++;
   }
 
-  printSummary(stats);
+  printSummary(stats, scraped);
   await closeBrowser(context);
+  control.dispose();
 }
 
 if (import.meta.main) {

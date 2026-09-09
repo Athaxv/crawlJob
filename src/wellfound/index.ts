@@ -22,6 +22,8 @@ import {
   ApplicationResult,
 } from './application.js';
 import * as log from '../logger.js';
+import { createRunControl } from '../run-control.js';
+import { handleRequiredFields } from '../application-agent/index.js';
 
 
 async function processJob(
@@ -94,9 +96,12 @@ async function processJob(
   }
 
   if (await hasMandatoryAdditionalFields(modal)) {
-    log.skip('Mandatory question / field detected');
-    await dismissModal(page, modal);
-    return 'skipped_mandatory_fields';
+    const agentResult = await handleRequiredFields(modal, { jobUrl, company: meta.company, role: meta.role, platform: 'Wellfound' });
+    if (agentResult !== 'filled') {
+      log.skip(agentResult === 'review_required' ? 'Agent answers are ready for review' : 'Mandatory question / field detected');
+      await dismissModal(page, modal);
+      return 'skipped_mandatory_fields';
+    }
   }
   log.step('No mandatory additional fields');
 
@@ -146,9 +151,11 @@ interface Stats {
   skipped_error:            number;
 }
 
-function printSummary(stats: Stats): void {
+function printSummary(stats: Stats, scraped: number): void {
   log.sectionHeader('Finished');
+  log.summaryLine('Scraped',                    scraped,                        log.tones.muted);
   log.summaryLine('Applied',                    stats.applied,                  log.tones.success);
+  log.summaryLine('Not applied',                scraped - stats.applied,        log.tones.warn);
   log.summaryLine('Already applied',            stats.already_applied,          log.tones.muted);
   log.summaryLine('Skipped — mandatory fields', stats.skipped_mandatory_fields, log.tones.warn);
   log.summaryLine('Skipped — external app',     stats.skipped_external,         log.tones.warn);
@@ -197,7 +204,8 @@ export async function run(): Promise<void> {
     skipped_error:            0,
   };
 
-  for (let i = 0; i < jobUrls.length; i++) {
+  const control = createRunControl();
+  for (let i = 0; i < jobUrls.length && !control.isCancelled(); i++) {
     const jobUrl = jobUrls[i];
     try {
       log.jobHeader(i + 1, jobUrls.length, jobUrl);
@@ -234,9 +242,10 @@ export async function run(): Promise<void> {
     }
   }
 
-  printSummary(stats);
+  printSummary(stats, jobUrls.length);
 
   await closeBrowser(context);
+  control.dispose();
 }
 
 if (import.meta.main) {
