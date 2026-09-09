@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.example
 screenshots/
+.crawljob/
 bun.lockb
 .DS_Store
 *.log

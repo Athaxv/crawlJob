@@ -1,11 +1,17 @@
 import path from 'path';
-import os from 'os';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import * as log from './logger.js';
 
-/** Where the persistent browser profile is stored. */
-const PROFILE_DIR = path.join(os.homedir(), '.crawljob', 'browser-profile');
+/**
+ * Keep the browser session in the project by default.  A profile under the
+ * home directory can be readable but not writable when the runner is
+ * sandboxed, causing Chromium to leave an about:blank window open while it
+ * fails to create its single-instance lock.
+ */
+const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PROFILE_OVERRIDE = process.env.BROWSER_PROFILE_DIR?.trim();
 
 const LAUNCH_TIMEOUT_MS = 60_000;
 
@@ -19,7 +25,7 @@ type PersistentLaunchOptions = NonNullable<Parameters<typeof chromium.launchPers
 /**
  * Resolves which browser to launch.
  *
- * Default: Playwright's bundled Chromium (most reliable CDP match).
+ * Default: Brave, then Chrome, then Playwright's bundled Chromium.
  * Overrides:
  *   BROWSER_PATH=/path/to/browser.exe
  *   BROWSER_CHANNEL=chrome|msedge   (Playwright-managed system browser)
@@ -39,6 +45,18 @@ function resolveLaunchTarget(): BrowserLaunchTarget {
     log.info('Falling back to Playwright Chromium. Run: bunx playwright install chromium');
   }
 
+  const localAppData = process.env.LOCALAPPDATA ?? '';
+  const preferredBrowsers = [
+    path.join(process.env.PROGRAMFILES ?? '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] ?? '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+    path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+    path.join(process.env.PROGRAMFILES ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(process.env['PROGRAMFILES(X86)'] ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+  ];
+  const installedBrowser = preferredBrowsers.find((candidate) => candidate && fs.existsSync(candidate));
+  if (installedBrowser) return { kind: 'executable', path: installedBrowser };
+
   return { kind: 'bundled' };
 }
 
@@ -46,6 +64,19 @@ function describeTarget(target: BrowserLaunchTarget): string {
   if (target.kind === 'bundled') return 'Playwright Chromium';
   if (target.kind === 'channel') return `channel:${target.channel}`;
   return target.path;
+}
+
+/** Browser profiles are not safely interchangeable across Chromium versions. */
+function resolveProfileDir(target: BrowserLaunchTarget): string {
+  if (PROFILE_OVERRIDE) return path.resolve(PROFILE_OVERRIDE);
+
+  const browserName = target.kind === 'bundled'
+    ? 'chromium'
+    : target.kind === 'channel'
+      ? target.channel
+      : path.basename(target.path, path.extname(target.path)).toLowerCase();
+
+  return path.join(PROJECT_DIR, '.crawljob', `browser-profile-${browserName}`);
 }
 
 /**
@@ -56,8 +87,13 @@ function describeTarget(target: BrowserLaunchTarget): string {
  */
 export async function launchBrowser(): Promise<BrowserContext> {
   const target = resolveLaunchTarget();
+  const profileDir = resolveProfileDir(target);
 
-  log.step(`Using browser profile: ${PROFILE_DIR}`);
+  // Fail clearly before Chromium starts if the selected profile is unusable.
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.accessSync(profileDir, fs.constants.R_OK | fs.constants.W_OK);
+
+  log.step(`Using browser profile: ${profileDir}`);
   log.step(`Using browser: ${describeTarget(target)}`);
 
   const options: PersistentLaunchOptions = {
@@ -78,7 +114,7 @@ export async function launchBrowser(): Promise<BrowserContext> {
   }
 
   try {
-    const context = await chromium.launchPersistentContext(PROFILE_DIR, options);
+    const context = await chromium.launchPersistentContext(profileDir, options);
     log.success('Browser ready');
     return context;
   } catch (err) {
@@ -87,7 +123,7 @@ export async function launchBrowser(): Promise<BrowserContext> {
     log.info('Close every Chrome/Chromium window opened by crawlJob, then try:');
     log.info(`  1. bunx playwright install chromium`);
     log.info(`  2. Remove BROWSER_PATH from .env (use bundled Chromium)`);
-    log.info(`  3. Delete profile: ${PROFILE_DIR}`);
+    log.info(`  3. Delete profile: ${profileDir}`);
     throw err;
   }
 }
