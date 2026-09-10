@@ -1,6 +1,6 @@
 # crawlJob
 
-Local Playwright automation for one-click job applications on **Wellfound** and **Instahyre**. Runs in your own browser with your own session — no backend.
+Local Playwright automation for one-click job applications on **Wellfound** , **Internshala**, **Instahyre**. Runs in your own browser with your own session — no backend.
 
 Based on [Anshul439/job-auto-apply](https://github.com/Anshul439/job-auto-apply); adapted to run with **Bun** or Node. CLI UI uses `picocolors` and `ora`.
 
