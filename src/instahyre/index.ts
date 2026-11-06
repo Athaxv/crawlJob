@@ -19,6 +19,8 @@ import {
 import { INSTAHYRE_JOBS_URL } from './selectors.js';
 import * as log from '../logger.js';
 import { createRunControl } from '../run-control.js';
+import { handleRequiredFields } from '../application-agent/index.js';
+import { screenJob } from '../job-screening.js';
 
 const SCREENSHOTS_DIR = path.resolve('screenshots');
 
@@ -36,6 +38,8 @@ interface Stats {
   already_applied:          number;
   skipped_no_apply_button:  number;
   skipped_captcha:          number;
+  skipped_ineligible:       number;
+  skipped_questions:        number;
   skipped_error:            number;
 }
 
@@ -47,6 +51,8 @@ function printSummary(stats: Stats, scraped: number): void {
   log.summaryLine('Already applied',           stats.already_applied,         log.tones.muted);
   log.summaryLine('Skipped — no Apply button', stats.skipped_no_apply_button, log.tones.muted);
   log.summaryLine('Skipped — CAPTCHA',         stats.skipped_captcha,         log.tones.error);
+  log.summaryLine('Skipped — profile filter',   stats.skipped_ineligible,     log.tones.warn);
+  log.summaryLine('Skipped — required fields',  stats.skipped_questions,      log.tones.warn);
   log.summaryLine('Skipped — error',           stats.skipped_error,           log.tones.error);
   log.outro('crawlJob · Instahyre');
 }
@@ -68,7 +74,7 @@ export async function run(): Promise<void> {
   const appliedSet = new Set<string>();
   const stats: Stats = {
     applied: 0, already_applied: 0,
-    skipped_no_apply_button: 0, skipped_captcha: 0, skipped_error: 0,
+    skipped_no_apply_button: 0, skipped_captcha: 0, skipped_ineligible: 0, skipped_questions: 0, skipped_error: 0,
   };
 
   let pageNum = 1;
@@ -126,6 +132,17 @@ export async function run(): Promise<void> {
         // Read richer metadata from the modal for logging.
         const meta = await getJobMetaFromModal(page);
         log.jobHeader(processed + 1, count, `${meta.company} — ${meta.role}`);
+        const modal = page.locator('[ng-controller="employerProfileModalCtrl"]').first();
+        const description = await modal.innerText().catch(() => '');
+        const screening = screenJob(meta.role, description);
+        if (!screening.eligible) {
+          log.skip(`Profile filter: ${screening.reason}`);
+          stats.skipped_ineligible++;
+          appliedSet.add(cardId);
+          await closeModal(page);
+          offset++; processed++;
+          continue;
+        }
 
         // Already applied (Instahyre state).
         if (await isAlreadyApplied(page)) {
@@ -158,6 +175,15 @@ export async function run(): Promise<void> {
           await closeModal(page);
           offset++;
           processed++;
+          continue;
+        }
+        const agentResult = await handleRequiredFields(modal, { company: meta.company, role: meta.role, platform: 'Instahyre' });
+        if (agentResult !== 'filled') {
+          log.skip('Required application fields need review or could not be safely answered');
+          stats.skipped_questions++;
+          appliedSet.add(cardId);
+          await closeModal(page);
+          offset++; processed++;
           continue;
         }
         log.step('Apply button found — submitting');

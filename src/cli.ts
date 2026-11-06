@@ -11,27 +11,39 @@ function usage(): never {
 ${name} — local job auto-apply
 
 Usage:
+  bun run crawlJob profile
+  bun run crawlJob profile --profile <path>
   bun run crawlJob run
+  bun run crawlJob run --profile <path>
   bun run crawlJob run --site wellfound
   bun run crawlJob run --site instahyre
   bun run crawlJob run --site internshala --type internships|jobs|both
 
 Options:
+  profile                                      Set job search preferences
   --site <wellfound|instahyre|internshala>   Skip the interactive picker
   --type <internships|jobs|both>             Internshala mode
+  --profile <path>                            Use or create a profile file
 `);
   process.exit(1);
 }
 
-function parseArgs(argv: string[]): { command?: string; site?: Site; internshalaMode?: InternshalaMode } {
+function parseArgs(argv: string[]): { command?: string; site?: Site; internshalaMode?: InternshalaMode; profilePath?: string } {
   const args = argv.slice(2);
   const command = args[0];
   let site: Site | undefined;
   let internshalaMode: InternshalaMode | undefined;
+  let profilePath: string | undefined;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
-    if (a === '--site') {
+    if (a === '--profile') {
+      profilePath = args[++i];
+      if (!profilePath) { console.error(pc.red('--profile requires a file path.')); usage(); }
+    } else if (a.startsWith('--profile=')) {
+      profilePath = a.slice('--profile='.length);
+      if (!profilePath) { console.error(pc.red('--profile requires a file path.')); usage(); }
+    } else if (a === '--site') {
       const value = args[++i]?.toLowerCase();
       if (value !== 'wellfound' && value !== 'instahyre' && value !== 'internshala') {
         console.error(pc.red(`Invalid --site value: ${value ?? '(missing)'}`));
@@ -59,7 +71,7 @@ function parseArgs(argv: string[]): { command?: string; site?: Site; internshala
     console.error(pc.red('--type is available only with --site internshala.'));
     usage();
   }
-  return { command, site, internshalaMode };
+  return { command, site, internshalaMode, profilePath };
 }
 
 async function pickSite(): Promise<Site> {
@@ -96,10 +108,23 @@ async function runSite(site: Site, internshalaMode?: InternshalaMode): Promise<v
 }
 
 async function main(): Promise<void> {
-  const { command, site: siteFlag, internshalaMode } = parseArgs(process.argv);
+  const parsed = parseArgs(process.argv);
+  if (parsed.profilePath) process.env.CRAWLJOB_PROFILE_PATH = parsed.profilePath;
+  if (parsed.command === 'profile') {
+    const mod = await import('./profile-setup.js');
+    await mod.configureProfile();
+    return;
+  }
+  const { command, site: siteFlag, internshalaMode } = parsed;
 
   if (command !== 'run') {
     usage();
+  }
+
+  const profile = await import('./profile-setup.js');
+  if (!profile.isProfileConfigured()) {
+    console.log(pc.yellow('No complete job profile was found. Set your filters to continue.'));
+    await profile.configureProfile();
   }
 
   const site = siteFlag ?? (await pickSite());

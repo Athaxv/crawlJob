@@ -24,6 +24,7 @@ import {
 import * as log from '../logger.js';
 import { createRunControl } from '../run-control.js';
 import { handleRequiredFields } from '../application-agent/index.js';
+import { screenJob } from '../job-screening.js';
 
 
 async function processJob(
@@ -57,6 +58,12 @@ async function processJob(
   // Log company / role now that the page has loaded.
   const meta = await getJobMeta(page);
   log.jobDetails(`${meta.company} — ${meta.role}`);
+  const description = await page.locator('main, [role="main"]').first().innerText().catch(() => '');
+  const screening = screenJob(meta.role, description);
+  if (!screening.eligible) {
+    log.skip(`Profile filter: ${screening.reason}`);
+    return 'skipped_ineligible';
+  }
 
   if (await isAlreadyApplied(page)) {
     log.skip('Already applied');
@@ -148,6 +155,7 @@ interface Stats {
   skipped_captcha:          number;
   skipped_no_apply_button:  number;
   skipped_rate_limited:     number;
+  skipped_ineligible:       number;
   skipped_error:            number;
 }
 
@@ -162,6 +170,7 @@ function printSummary(stats: Stats, scraped: number): void {
   log.summaryLine('Skipped — CAPTCHA',          stats.skipped_captcha,          log.tones.error);
   log.summaryLine('Skipped — no Apply button',  stats.skipped_no_apply_button,  log.tones.muted);
   log.summaryLine('Skipped — rate limited',     stats.skipped_rate_limited,     log.tones.error);
+  log.summaryLine('Skipped — profile filter',   stats.skipped_ineligible,       log.tones.warn);
   log.summaryLine('Skipped — error',            stats.skipped_error,            log.tones.error);
   log.outro('crawlJob · Wellfound');
 }
@@ -201,6 +210,7 @@ export async function run(): Promise<void> {
     skipped_captcha:          0,
     skipped_no_apply_button:  0,
     skipped_rate_limited:     0,
+    skipped_ineligible:       0,
     skipped_error:            0,
   };
 

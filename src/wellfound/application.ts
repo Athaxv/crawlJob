@@ -14,6 +14,7 @@ export type ApplicationResult =
   | 'skipped_captcha'
   | 'skipped_no_apply_button'
   | 'skipped_rate_limited'
+  | 'skipped_ineligible'
   | 'skipped_error';
 
 
@@ -42,10 +43,14 @@ export async function openApplication(
   const tabHandler = (p: Page) => { newTabPage = p; };
   context.on('page', tabHandler);
 
-  await applyButton.click();
+  // The application modal can open during the click and cover the Apply
+  // button before Playwright completes its stability checks. Bound the click
+  // wait, then detect the modal as a successful transition below.
+  let clickError: unknown;
+  await applyButton.click({ timeout: 5000 }).catch((err: unknown) => { clickError = err; });
 
   // Allow time for: modal animation, page navigation, or tab to open.
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(clickError ? 1000 : 1500);
   context.off('page', tabHandler);
 
   // 1. New tab opened?
@@ -100,6 +105,7 @@ export async function openApplication(
   }
 
   // 6. Nothing detected
+  if (clickError) log.info(`Apply click did not open a detectable form: ${(clickError as Error).message}`);
   const screenshotPath = await takeDebugScreenshot(page, 'apply_no_form_detected');
   log.info(`No application form detected. Screenshot saved: ${screenshotPath}`);
   return null;
@@ -156,7 +162,8 @@ export async function hasMandatoryAdditionalFields(modal: Locator): Promise<bool
 
       const isRequired =
         field.required ||
-        field.getAttribute('aria-required') === 'true';
+        field.getAttribute('aria-required') === 'true' ||
+        field.name.includes('customQuestionAnswers');
 
       if (!isRequired) continue;
 

@@ -20,6 +20,21 @@ Copy `.env.example` to `.env` if you need overrides (`BROWSER_CHANNEL`, `BROWSER
 
 ## Usage
 
+Set or update your job preferences at any time. If `run` finds no complete profile, it opens the same setup questions before starting:
+
+```bash
+bun run crawlJob profile
+```
+
+Choose a profile file explicitly when setting it up or running:
+
+```bash
+bun run crawlJob profile --profile ./profiles/backend.json
+bun run crawlJob run --profile ./profiles/backend.json --site wellfound
+```
+
+The CLI asks for target roles, experience level, location, job types, years of relevant experience, and optional expected salary. Enter or paste many target roles in one response separated by commas, for example `Software Engineer, SDE, Full Stack Developer, Tech Intern`. It saves these under `jobPreferences` in `.crawljob/profile.json` by default and preserves existing personal profile fields in that file.
+
 After registering the local command once with `npm link`, run it from any PowerShell window:
 
 ```bash

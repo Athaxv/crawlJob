@@ -3,6 +3,7 @@ import 'dotenv/config';
 import type { Page } from 'playwright';
 import { closeBrowser, getActivePage, launchBrowser, openFirstPage } from '../browser.js';
 import { handleRequiredFields } from '../application-agent/index.js';
+import { screenJob } from '../job-screening.js';
 import * as log from '../logger.js';
 import { createRunControl } from '../run-control.js';
 import { IS, INTERNSHALA_DOMAIN_RE, INTERNSHALA_INTERNSHIPS_URL, INTERNSHALA_JOBS_URL } from './selectors.js';
@@ -15,12 +16,13 @@ interface Stats {
   applied: number;
   alreadyApplied: number;
   skippedQuestions: number;
+  skippedProfile: number;
   skippedCaptcha: number;
   skippedExternal: number;
   skippedError: number;
 }
 
-const newStats = (): Stats => ({ scraped: 0, applied: 0, alreadyApplied: 0, skippedQuestions: 0, skippedCaptcha: 0, skippedExternal: 0, skippedError: 0 });
+const newStats = (): Stats => ({ scraped: 0, applied: 0, alreadyApplied: 0, skippedQuestions: 0, skippedProfile: 0, skippedCaptcha: 0, skippedExternal: 0, skippedError: 0 });
 
 async function screenshot(page: Page, label: string): Promise<string> {
   const dir = path.resolve('screenshots');
@@ -29,11 +31,14 @@ async function screenshot(page: Page, label: string): Promise<string> {
   return file;
 }
 
-async function processListing(page: Page, url: string, stats: Stats): Promise<void> {
+async function processListing(page: Page, url: string, stats: Stats, listingType: string): Promise<void> {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.waitForTimeout(800);
   const meta = await getJobMeta(page);
   log.jobDetails(meta);
+  const description = await page.locator('main, [role="main"]').first().innerText().catch(() => '');
+  const screening = screenJob(meta.split(' — ')[0] ?? meta, description, listingType);
+  if (!screening.eligible) { log.skip(`Profile filter: ${screening.reason}`); stats.skippedProfile++; return; }
 
   if (await isAlreadyApplied(page)) {
     log.skip('Already applied');
@@ -129,7 +134,7 @@ async function runCategory(page: Page, name: 'Internships' | 'Jobs', url: string
     const listing = listings[index];
     log.jobHeader(index + 1, listings.length, listing.url);
     try {
-      await processListing(page, listing.url, stats);
+      await processListing(page, listing.url, stats, name === 'Internships' ? 'internship' : 'job');
     } catch (err) {
       const shot = await screenshot(page, 'unexpected_error');
       log.error(`${(err as Error).message}. Screenshot: ${shot}`);
@@ -146,6 +151,7 @@ function printSummary(stats: Stats): void {
   log.summaryLine('Not applied', stats.scraped - stats.applied, log.tones.warn);
   log.summaryLine('Already applied', stats.alreadyApplied, log.tones.muted);
   log.summaryLine('Skipped — required fields', stats.skippedQuestions, log.tones.warn);
+  log.summaryLine('Skipped — profile filter', stats.skippedProfile, log.tones.warn);
   log.summaryLine('Skipped — CAPTCHA', stats.skippedCaptcha, log.tones.error);
   log.summaryLine('Skipped — external', stats.skippedExternal, log.tones.warn);
   log.summaryLine('Skipped — error', stats.skippedError, log.tones.error);
